@@ -1,0 +1,1932 @@
+---
+title: "Project 1"
+author: "Jordan Klein"
+date: "2025-10-17"
+output: html_document
+---
+
+---------------------------------
+## YOUTUBE Link
+https://www.youtube.com/watch?v=xUyYTIhuPhA
+---------------------------------
+## INIT
+Clear the environment.
+Import libraries and data.
+Set up labelled and ordered factors.
+---------------------------------
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Fresh start
+rm(list = ls())
+
+#Libraries
+library(tidyverse)
+library(naniar)
+library(class)
+library(caret)
+library(e1071)
+library(patchwork)
+library(ggthemes)
+library(gt)
+library(scales)
+library(rlang)
+library(themis)
+library(ggridges)
+library(smotefamily)
+
+#Load Data
+data <- read.csv(file.choose())
+
+#Set Factors
+data$Attrition <- as.factor(data$Attrition)
+data$BusinessTravel <- factor(
+  data$BusinessTravel,
+  levels = c("Non-Travel", "Travel_Rarely", "Travel_Frequently"),
+  ordered = TRUE
+)
+data$Department <- as.factor(data$Department)
+data$Education <- factor(
+  data$Education,
+  labels = c("Below College", "College", "Bachelor", "Master", "Doctor"),
+  ordered = TRUE
+)
+data$EducationField <- as.factor(data$EducationField)
+data$Gender <- as.factor(data$Gender)
+data$JobInvolvement <- factor(
+  data$JobInvolvement,
+  labels = c("Low", "Medium", "High", "Very High"),
+  ordered = TRUE
+)
+data$JobLevel <- factor(
+  data$JobLevel,
+  labels = c("Entry", "Junior", "Mid", "Senior", "Executive"),
+  ordered = TRUE
+)
+data$JobRole <- as.factor(data$JobRole)
+data$MaritalStatus <- as.factor(data$MaritalStatus)
+data$Over18 <- as.factor(data$Over18)
+data$OverTime <- as.factor(data$OverTime)
+data$PerformanceRating <- factor(
+  data$PerformanceRating,
+  levels = c(1, 2, 3, 4),
+  labels = c("Low", "Medium", "High", "Very High"),
+  ordered = TRUE
+)
+data$RelationshipSatisfaction <- factor(
+  data$RelationshipSatisfaction,
+  labels = c("Low", "Medium", "High", "Very High"),
+  ordered = TRUE
+)
+data$StockOptionLevel <- factor(
+  data$StockOptionLevel,
+  labels = c("None", "Low", "Medium", "High"),
+  ordered = TRUE
+)
+data$WorkLifeBalance <- factor(
+  data$StockOptionLevel,
+  labels = c("Bad", "Good", "Better", "Best"),
+  ordered = TRUE
+)
+
+# Color Scheme: Solarized
+
+base0 = "#839496"
+base1 = "#93a1a1"
+base2 = "#eee8d5"
+base3 = "#fdf6e3"
+yellow = "#b58900"
+orange = "#cb4b16"
+red = "#dc322f"
+magenta = "#d33682"
+violet = "#6c71c4"
+blue = "#268bd2"
+cyan = "#2aa198"
+green = "#859900"
+
+# Define Column Groupints
+
+# `Know Your Employee`
+KYE <- c(
+  "Age",
+  "Department",
+  "Education",
+  "EducationField",
+  "Gender",
+  "MaritalStatus",
+  "NumCompaniesWorked"
+)
+
+QualityOfLife <- c(
+  "BusinessTravel",
+  "DistanceFromHome",
+  "EnvironmentSatisfaction",
+  "JobInvolvement",
+  "JobSatisfaction",
+  "OverTime",
+  "RelationshipSatisfaction",
+  "WorkLifeBalance"
+)
+
+Reward <- c(
+  "HourlyRate",
+  "MonthlyIncome",
+  "MonthlyRate",
+  "StockOptionLevel",
+  "PercentSalaryHike"
+)
+
+CareerProgression <- c(
+  "JobRole",
+  "JobLevel",
+  "TotalWorkingYears",
+  "TrainingTimesLastYear",
+  "YearsAtCompany",
+  "YearsInCurrentRole",
+  "YearsSinceLastPromotion",
+  "YearsWithCurrManager"
+)
+
+data %>% 
+  select(JobLevel, StockOptionLevel, Attrition) %>% 
+  filter(
+    JobLevel == "Entry",
+    StockOptionLevel == "High"
+  ) 
+```
+
+---------------------------------
+## MODEL HELPER FUNCTIONS
+
+You must run this code block before evaluating the models on test data.
+
+The helper functions are categorized by their role in the model development \
+pipeline:
+  - Preprocessing
+  - Inference
+  - Evaluation
+
+---------------------------------
+```{r}
+# ---------------------------------
+# PREPROCESSING
+# Contains function for scaling, splitting, and slicing data for modeling.
+# ---------------------------------
+
+train_test_split <- function( df, train_size = 0.7) {
+  
+  # Randomly shuffles and splits a data frame into training and testing sets.
+  #
+  # Args:
+  #   - df: A data frame to be split.
+  #   - train_size: A numeric value (between 0 and 1) indicating the proportion
+  #       of data to include in the training set. Default is 0.7.
+  #
+  # Returns:
+  #   splits: list containing two data frames:
+  #     - train: The training subset of the data.
+  #     - test:  The testing subset of the data.
+  #
+  
+  # --- Randomly select train indices ---
+  n <- nrow(df)
+  train_indices <- sample(seq_len(n), size = floor(train_size * n))
+  
+  # --- Segment data using the indices ---
+  train <- df[train_indices, , drop = FALSE]
+  test  <- df[-train_indices, , drop = FALSE]
+  
+  return(list(train = train, test = test))
+}
+
+slice_train_test <- function(splits, features, label) {
+  
+  # Splits the training and testing data into feature and label sets.
+  #
+  # Args:
+  #   - splits: A list containing 'train' and 'test' data frames.
+  #   - features: A character vector of column names to be used as features.
+  #   - label: A string specifying the name of the label (target) column.
+  #
+  # Returns:
+  #   A list containing:
+  #     - train.X: Training features (data frame)
+  #     - train.Y: Training labels (vector)
+  #     - test.X: Testing features (data frame)
+  #     - test.Y: Testing labels (vector)
+  
+  train <- splits$train
+  test  <- splits$test
+  
+  train.X <- train[ , features, drop = FALSE]
+  train.Y <- as.factor(train[[label]])
+  test.X  <- test[ , features, drop = FALSE]
+  test.Y <- as.factor(test[[label]])
+  
+  return(list(train = train, test = test, train.X = train.X, train.Y = train.Y, test.X = test.X, test.Y = test.Y))
+}
+
+apply_scaling <- function(splits) {
+  # Applies heuristic scaling to feature sets, fitting only on training data.
+  #
+  # Args:
+  #   - splits: A list containing 'train.X' and 'test.X' data frames.
+  #
+  # Returns:
+  #   The same 'splits' list with scaled 'train.X' and 'test.X'.
+  
+  # --- Helper to normalize numeric columns (0–1) ---
+  normalize <- function(x, ref_x) {
+    rng <- range(ref_x, na.rm = TRUE)
+    if (diff(rng) == 0) return(rep(0, length(x)))
+    (x - rng[1]) / diff(rng)
+  }
+  
+  train.X <- splits$train.X
+  test.X  <- splits$test.X
+  
+  # --- Identify column types based on training data ---
+  num_cols <- names(train.X)[sapply(train.X, is.numeric)]
+  ord_cols <- names(train.X)[sapply(train.X, is.ordered)]
+  fac_cols <- names(train.X)[sapply(train.X, function(x) is.factor(x) && !is.ordered(x))]
+  
+  train_scaled <- train.X
+  test_scaled  <- test.X
+  
+  # --- Scale numeric features ---
+  if (length(num_cols) > 0) {
+    train_scaled[num_cols] <- lapply(train.X[num_cols], normalize, ref_x = train.X[num_cols])
+    test_scaled[num_cols]  <- Map(normalize, test.X[num_cols], train.X[num_cols])
+  }
+  
+  # --- Scale ordered factors (convert to numeric 0–1 ranks) ---
+  if (length(ord_cols) > 0) {
+    to_scaled_ord <- function(x, ref_x) {
+      as.numeric(x) / max(as.numeric(ref_x), na.rm = TRUE)
+    }
+    train_scaled[ord_cols] <- Map(to_scaled_ord, train.X[ord_cols], train.X[ord_cols])
+    test_scaled[ord_cols]  <- Map(to_scaled_ord, test.X[ord_cols], train.X[ord_cols])
+  }
+  
+  # --- One-hot encode unordered factors using training levels ---
+  if (length(fac_cols) > 0) {
+    dummies <- caret::dummyVars(~ ., data = train.X[fac_cols])
+    train_fac <- as.data.frame(predict(dummies, newdata = train.X[fac_cols]))
+    test_fac  <- as.data.frame(predict(dummies, newdata = test.X[fac_cols]))
+    
+    train_scaled <- bind_cols(select(train_scaled, -all_of(fac_cols)), train_fac)
+    test_scaled  <- bind_cols(select(test_scaled, -all_of(fac_cols)), test_fac)
+  }
+  
+  splits$train.X <- train_scaled
+  splits$test.X  <- test_scaled
+  
+  return(splits)
+}
+
+apply_smote <- function(splits, perc_over = 200, perc_under = 200, k = 5, label = "Attrition") {
+  # Applies SMOTE balancing to the training data in 'splits'.
+  #
+  # Args:
+  #   - splits: A list with elements train.X and train.Y.
+  #   - perc_over: Percentage of over-sampling for minority classes.
+  #   - perc_under: Percentage of under-sampling for majority classes (not used here).
+  #   - k: Number of nearest neighbors for SMOTE.
+  #   - label: Name of the target column.
+  #
+  # Returns:
+  #   Updated 'splits' list with balanced train.X and train.Y.
+  
+  # Combine features and label into one data frame for SMOTE
+  train_data <- data.frame(splits$train.X, target = splits$train.Y)
+  
+  # Count samples in the smallest class
+  class_counts <- table(train_data$target)
+  min_class_size <- min(class_counts)
+  
+  # Ensure K < min_class_size
+  k_safe <- min(k, min_class_size - 1)
+  if (k_safe < 1) k_safe <- 1
+  
+  # Apply SMOTE
+  smote_result <- smotefamily::SMOTE(X = train_data[, -ncol(train_data)],
+                                     target = train_data$target,
+                                     K = k_safe,
+                                     dup_size = perc_over / 100)
+  
+  balanced <- smote_result$data
+  # The last column is the target variable created by SMOTE
+  balanced[[ncol(balanced)]] <- as.factor(balanced[[ncol(balanced)]])
+  
+  # Split back into X and Y
+  splits$train.X <- balanced[, -ncol(balanced), drop = FALSE]
+  splits$train.Y <- balanced[[ncol(balanced)]]
+  
+  return(splits)
+}
+
+# ---------------------------------
+# FEATURE ENGINEERING
+# Add features to improve model performance.
+# ---------------------------------
+
+add_joblevel_group <- function(splits) {
+  
+  # Adds a JobLevelGroup column to both train and test sets.
+
+  
+  for (name in c("train", "test")) {
+    splits[[name]] <- splits[[name]] %>%
+      mutate(
+        JobLevelGroup = case_when(
+          JobLevel %in% c("Entry", "Junior") ~ "Low",
+          JobLevel %in% c("Mid", "Senior") ~ "Middle",
+          TRUE ~ "High"
+        ),
+        JobLevelGroup = factor(JobLevelGroup, levels = c("Low", "Middle", "High"))
+      )
+  }
+  
+  return(splits)
+}
+
+add_department_group <- function(splits) {
+  
+  # Adds a DepartmentGroup column to both train and test sets.
+  
+  for (name in c("train", "test")) {
+    splits[[name]] <- splits[[name]] %>%
+      mutate(
+        DepartmentGroup = case_when(
+          Department == "Sales" ~ "Sales",
+          TRUE ~ "NotSales"
+        ),
+        DepartmentGroup = as.factor(DepartmentGroup)
+      )
+  }
+  
+  return (splits)
+}
+
+add_income_residuals <- function(splits) {
+  
+  # Calculates residuals, and adds a categorical label: Below Expected, Around Expected, Above Expected
+  
+  x <- "YearsAtCompany"
+  y <- "MonthlyIncome"
+  groups <- c("JobLevel", "Department")
+  
+  train <- splits$train
+  test <- splits$test
+  
+  train <- train %>% mutate(IncomeResidual = NA_real_)
+  test  <- test  %>% mutate(IncomeResidual = NA_real_)
+  
+  group_combos <- train %>% distinct(across(all_of(groups)))
+  
+  for (i in seq_len(nrow(group_combos))) {
+    grp_vals <- group_combos[i, ]
+    
+    # Select rows belonging to this group
+    train_grp_idx <- which(rowSums(sapply(groups, function(col) train[[col]] == grp_vals[[col]])) == length(groups))
+    train_grp <- train[train_grp_idx, ]
+    
+    if (nrow(train_grp) < 2) next
+    
+    # Skip if YearsAtCompany is constant or all NA
+    if (length(unique(train_grp[[x]][!is.na(train_grp[[x]])])) < 2) next
+    
+    model <- lm(reformulate(x, y), data = train_grp)
+    
+    # Residuals for train
+    train$IncomeResidual[train_grp_idx] <- train_grp[[y]] - predict(model, newdata = train_grp)
+    
+    # Residuals for test (only for groups seen in train)
+    test_grp_idx <- which(rowSums(sapply(groups, function(col) test[[col]] == grp_vals[[col]])) == length(groups))
+    if (length(test_grp_idx) == 0) next
+    
+    preds <- predict(model, newdata = test[test_grp_idx, ])
+    test$IncomeResidual[test_grp_idx] <- test[test_grp_idx, y] - preds
+  }
+  
+  # Optionally fill remaining NAs with mean residual (centered at 0)
+  train$IncomeResidual[is.na(train$IncomeResidual)] <- 0
+  test$IncomeResidual[is.na(test$IncomeResidual)] <- 0
+  
+  splits$train <- train
+  splits$test <- test
+  return(splits)
+}
+
+add_education_group <-function(splits) {
+  
+  # Adds a EducationGroup column to both train and test sets.
+  
+  for (name in c("train", "test")) {
+    splits[[name]] <- splits[[name]] %>%
+      mutate(
+        EducationGroup = case_when(
+          JobLevel %in% c("Below College", "College") ~ "Low",
+          JobLevel %in% c("Bachelor") ~ "Middle",
+          TRUE ~ "High"
+        ),
+        JobLevelGroup = factor(JobLevelGroup, levels = c("Low", "Middle", "High"))
+      )
+  }
+  
+  return(splits)
+}
+
+   
+engineer_features <- function(splits, choices = c()) {
+  
+  # Ties together all feature engineering options
+  
+  
+  if ("JobLevelGroup" %in% choices) {
+    splits <- add_joblevel_group(splits)
+  }
+  
+  if ("DepartmentGroup" %in% choices) {
+    splits <- add_department_group(splits)
+  }
+  
+  if ("IncomeResidual" %in% choices) {
+    splits <- add_income_residuals(splits)
+  }
+  
+  if ("EducationGroup" %in% choices) {
+    splits <- add_education_group(splits)
+  }
+  
+  return (splits)
+}
+
+
+
+# ---------------------------------
+# INFERENCE
+# Given training data, has functions for making predictions with
+# Naive Bayes and K-NN.
+# ---------------------------------
+
+get_knn_predictions <- function(splits, k=NULL, balance = FALSE) {
+  
+  # Generates predictions using the K-Nearest Neighbors (KNN) algorithm.
+  #
+  # Args:
+  #   - splits: A list containing training and testing data components:
+  #       - train.X — dataframe of training features
+  #       - test.X  — dataframe of testing features
+  #       - train.Y — vector of training labels
+  #   - k: Integer specifying the number of nearest neighbors to use for prediction.
+  #
+  # Returns:
+  #   A vector of predicted class labels for the test set.
+    splits <- apply_scaling(splits)
+  
+  if (balance) {
+    splits <- apply_smote(splits)
+    }
+  
+  if(is.null(k)) {k <- floor(max(3, sqrt(nrow(splits$train))))}
+  
+  predictions <- class::knn(
+    train = splits$train.X,
+    test = splits$test.X,
+    cl = splits$train.Y,
+    k=k
+    )
+    return (predictions)
+}
+
+get_naivebayes_predictions <- function(splits) {
+  
+  # Generates predictions using Naive Bayes.
+  #
+  # Args:
+  #   - splits: A list containing training and testing data components:
+  #       - train.X — dataframe of training features
+  #       - test.X  — dataframe of testing features
+  #       - train.Y — vector of training labels
+  #   - k: Integer specifying the number of nearest neighbors to use for prediction.
+  #
+  # Returns:
+  #   A vector of predicted class labels for the test set.
+  
+  model <- e1071::naiveBayes(
+    x = splits$train.X, 
+    y = splits$train.Y
+    )
+  
+  predictions <- predict(
+    object = model, 
+    newdata = splits$test.X
+    )
+  
+  return(predictions)
+}
+
+run_model <- function(splits, model_class, k = NULL, balance = FALSE) {
+  
+  if (model_class == "knn") {
+    predictions <- get_knn_predictions(splits, k=k, balance = balance)
+  } else if (model_class == "naivebayes") {
+    predictions <- get_naivebayes_predictions(splits)
+  }
+  
+  
+  return(predictions)
+}
+
+get_predictions <- function(
+  splits,
+  model_class = "naivebayes",
+  k = NULL,
+  group_col = NULL,
+  label = "Attrition",
+  balance = FALSE
+) {
+  # Runs inference either on the entire dataset or grouped by a factor column.
+  #
+  # Args:
+  #   - splits: List containing train/test data and features/labels.
+  #   - model_class: "knn" or "naivebayes".
+  #   - k: Number of neighbors (for KNN only).
+  #   - group_col: Optional string; name of column to group by.
+  #
+  # Returns:
+  #   - A vector of predictions in the same order as the original test set.
+  
+  # --- CASE 1: No grouping, evaluate normally ---
+  if (is.null(group_col)) {
+    preds <- run_model(splits, model_class=model_class, balance = balance)
+    return(preds)
+  }
+  
+  # --- CASE 2: Grouped inference ---
+  train <- splits$train
+  test <- splits$test
+  
+  # Store predictions in same order as test
+  preds <- factor(rep(NA, nrow(test)), levels = levels(splits$test.Y))
+  
+  # Iterate over each group present in test data
+  for (grp in unique(test[[group_col]])) {
+    train_grp <- train[train[[group_col]] == grp, , drop = FALSE]
+    test_grp <- test[test[[group_col]] == grp, , drop = FALSE]
+    
+    if (nrow(train_grp) == 0 || nrow(test_grp) == 0) {
+      next  # skip groups missing from either set
+    }
+    
+    # Slice features and labels
+    sub_splits <- slice_train_test(
+      splits = list(train = train_grp, test = test_grp),
+      features = colnames(splits$train.X),
+      label = label
+    )
+    
+    # Run inference for this group
+    grp_preds <- run_model(sub_splits, model_class=model_class, balance=balance)
+    
+    # Place predictions back into correct rows
+    preds[rownames(test) %in% rownames(test_grp)] <- grp_preds
+  }
+  
+  return(preds)
+}
+
+
+
+# ---------------------------------
+# Evaluation
+# 
+# Functions for projecting the cost of attrition and intervention, plotting
+# and rendering evaluation summaries, and apploying the procedure over a series
+# of random splits.
+# ---------------------------------
+
+get_eval_df <- function(test, predictions, attrition_multiplier = 12, intervention_multiplier = 3)   {
+  
+  # Prepares an evaluation DataFrame to assess the cost impact of attrition 
+  # and interventions, and to evaluate specificity across departments and job levels.
+  #
+  # Args:
+  #  - test: DataFrame containing the test data.
+  #  - predictions: A vector of model predictions.
+  #  - attrition_multiplier: Multiplier to compute attrition cost, defaults to 12 (Annual)
+  #  - intervention_multiplier: Multiplier to computer intervention cost, defaults to 3 (Quarterly)
+  #
+  # Returns:
+  #   eval: DataFrame containing evaluation records.
+  
+
+  eval <- test %>% 
+    mutate(
+      AttritionCost  = attrition_multiplier * MonthlyIncome,
+      InterventionCost = intervention_multiplier * MonthlyIncome,
+      Actual = Attrition,
+      Predictions = predictions
+    ) %>% 
+    select(ID, Actual, Predictions, JobLevel, Department, AttritionCost, InterventionCost)
+  
+  return (eval)
+}
+
+summarise_cost_impact <- function(eval) {
+  
+  # Summarizes cost impact metrics from model evaluation results..
+  #
+  # Args:
+  #   eval: DataFrame containing evaluation records, including cost data, 
+  #         actual labels, and model predictions.
+  #
+  # Returns:
+  #   DataFrame summarizing cost impact metrics, including:
+  #     - Total Intervention Cost: The investment required to prevent attrition.
+  #     - Cost of No Action: The estimated loss if no intervention is applied.
+  #     - Unrealized Attrition Loss: The recoverable loss from correctly predicted attrition cases.
+  #     - Realized Attrition Loss: The loss from employees who left but were not predicted to do so.
+  #     - Potential Net Benefit: The net gain if all predicted employees are successfully retained.
+
+  eval %>%
+    mutate(
+      # Define scenario flags
+      TruePositive  = (Predictions == "Yes" & Actual == "Yes"),
+      FalsePositive = (Predictions == "Yes" & Actual == "No"),
+      FalseNegative = (Predictions == "No"  & Actual == "Yes")
+    ) %>%
+    summarise(
+      TotalInterventionCost  = sum(InterventionCost[TruePositive | FalsePositive]),
+      CostOfNoAction = sum(AttritionCost[TruePositive | FalseNegative]),
+      UnrealisedAttritionLoss = sum(AttritionCost[TruePositive]),
+      RealisedAttritionLoss   = sum(AttritionCost[FalseNegative])
+    ) %>%
+    mutate(
+      PotentialNetBenefit = CostOfNoAction - RealisedAttritionLoss - TotalInterventionCost,
+    )
+    
+}
+
+summary_table_formatting <- function(gt_table) {
+  
+  # Global formatting instructions for gt tables.
+  
+  gt_table %>%
+    # Bold column headers
+    tab_style(
+      style = cell_text(weight = "bold"),
+      locations = cells_column_labels(everything())
+    ) %>%
+    
+    # Center and bold stubheads
+    tab_style(
+      style = cell_text(weight = "bold", align = "center"),
+      locations = cells_stubhead()
+    ) %>%
+    
+    # Add vertical dividing line between stub and data columns
+    tab_style(
+      style = cell_borders(sides = "right", color = base1, weight = px(1)),
+      locations = cells_stub(rows = everything())
+    ) %>%
+    
+    # Bold the final row
+    tab_style(
+      style = cell_text(weight = "bold"),
+      locations = cells_body(
+        rows = nrow(gt_table$`_data`) 
+      )
+    ) %>% 
+    
+    # Global visual options
+    tab_options(
+      table.border.top.color = "white",
+      table.border.bottom.color = "white",
+      data_row.padding = px(6),
+      table_body.hlines.color = base1,
+      table.background.color = base3
+    )
+}
+
+render_cost_impact_table <- function(results) {
+  
+  # Renders a presentation ready table from the results.
+  
+  metrics <- results$metrics
+  impact <- results$impact
+  
+  # --- Assemble data frame ---
+  metrics_df <- tibble::tibble(
+    Metric = c(
+      "Accuracy",
+      "Sensitivity",
+      "Specificity",
+      "Balanced Acc",
+      "F1",
+      "Cost of No Action",
+      "Cost of Intervention",
+      "Realised Attrition",
+      "Unrealised Attrition",
+      "Potential Net Benefit"
+    ),
+    Value = c(
+      percent(metrics$Accuracy, accuracy = 0.1),
+      percent(metrics$Sensitivity, accuracy = 0.1),
+      percent(metrics$Specificity, accuracy = 0.1),
+      percent(metrics$`Balanced Accuracy`, accuracy = 0.1),
+      number(metrics$F1, accuracy = 0.001),
+      dollar(impact$CostOfNoAction, scale = 1, accuracy = 1),
+      dollar(impact$TotalInterventionCost, scale = 1, accuracy = 1000),
+      dollar(impact$RealisedAttritionLoss, accuracy = 1000),
+      dollar(impact$UnrealisedAttritionLoss, accuracy = 1000),
+      dollar(impact$PotentialNetBenefit, scale = 1, accuracy = 1000)
+    )
+  )
+  
+  # --- Build gt table ---
+  metrics_table <- metrics_df %>%
+    gt() %>%
+    tab_header(
+      title = md("**Model Metrics**")
+    ) %>%
+    cols_label(
+      Metric = md("**Metric**"),
+      Value = md("**Value**")
+    ) %>%
+    tab_style(
+      style = cell_text(weight = "bold"),
+      locations = cells_column_labels(everything())
+    ) %>%
+    tab_options(
+      table.font.size = 14,
+      table.width = pct(60),
+      heading.title.font.size = 18,
+      heading.align = "center"
+    ) %>%  summary_table_formatting()
+  
+  return(metrics_table)
+}
+
+plot_confusion_matrix <- function(cm, relative = FALSE) {
+  
+  # Renders a presentation-ready confusion matrix.
+  
+  cm_df <- as.data.frame(cm)
+  cm_df$Reference <- as.factor(cm_df$Reference)
+  cm_df$Prediction <- as.factor(cm_df$Prediction)
+  
+  if (relative) {
+    cm_df <- cm_df %>%
+      group_by(Reference) %>%
+      mutate(Freq = Freq / sum(Freq)) %>%
+      ungroup()
+  }
+  
+  ggplot(cm_df, aes(x = Reference, y = Prediction, fill = Freq)) + 
+    geom_tile(color = "white") + 
+    geom_text(
+      aes(
+        label = if (relative) paste0(round(Freq * 100, 1), "%") else Freq
+      ),
+      size = 8, fontface = "bold"
+    ) +
+    scale_fill_gradient(low = base3, high = cyan) + 
+    labs(
+      title = if (relative) "CM of Attrition Predictons",
+      x = "Actual", 
+      y = "Predicted"
+    ) +
+    theme_solarized(base_size = 20) + 
+    theme(legend.position = "none")
+}
+
+plot_sensitivity_matrix <- function(eval) {
+  
+  # Plots a heatmap that probes sensitivity across department and job level.
+  
+  p <- eval %>% 
+    select(Actual, Predictions, JobLevel, Department) %>% 
+    filter(Actual == "Yes") %>% 
+    group_by(JobLevel, Department) %>% 
+    summarise(Sensitivity = mean(Predictions == "Yes"), .groups = "drop") %>% 
+    ggplot(aes(x = Department, y = JobLevel, fill = Sensitivity)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient(low = base3, high = cyan) +
+    geom_text(aes(label = percent(Sensitivity, accuracy = 1)), size = 8) +
+    labs(
+      title = "Sensitivity by Department and Job Level",
+      x = "Department",
+      y = "Job Level"
+    ) +
+    theme_solarized(base_size = 18) +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  return (p)
+}
+
+check_for_missing_columns <- function(df, columns, split = "train") {
+
+  # For sanity checking. Checks that all required columns are present in a dataset.
+
+  
+  # Identify which columns are missing from the dataframe
+  missing <- setdiff(columns, colnames(df))
+  
+  # If any are missing, stop with an informative message
+  if (length(missing) > 0) {
+    stop(paste(
+      "The following columns are missing from the", split, "dataset:",
+      paste(missing, collapse = ", ")
+    ))
+  }
+
+}
+
+sanity_check <- function(
+    splits, 
+    features, 
+    id = "ID", 
+    label = "Attrition",
+    group_col = NULL,
+    value = c("MonthlyIncome", "Department", "JobLevel"),
+    model_class = "naivebayes"
+) {
+  
+  # Step 1 of the Model Eval Pipeline.
+  # Checks for missing columns and ensures that the model class is valid.
+  
+    # Ensures that the model_class, features, label, and value columns are valid.
+  
+    # --- Validate model class ---
+    valid_models <- c("knn", "naivebayes")
+    if (!(tolower(model_class) %in% valid_models)) {
+        warning(paste0(
+            "Invalid model_class: '", model_class, 
+            "'. Defaulting to 'naivebayes'. (Valid options: 'knn', 'naivebayes')"
+        ))
+        model_class <- "naivebayes"
+    } else {
+        model_class <- tolower(model_class)
+    }
+    
+    # --- Check for missing columns in training data ---
+    check_for_missing_columns(splits$train, c(features, id, label, group_col), split = "train")
+    check_for_missing_columns(splits$test, c(features, label, group_col, value), split = "test")
+}
+
+
+model_eval <- function(
+    data, 
+    features,
+    engineered_features = c(),
+    id = "ID",
+    label = "Attrition",
+    model_class = "naivebayes",
+    group_col = NULL,
+    balance = FALSE,
+    test = NULL,
+    seed = 101, 
+    train_size = 0.7,
+    k = NULL,
+    render_results = TRUE
+) {
+  
+  # Main function that ties together preprocessing, prediction, and evaluation.
+  #
+  # Args:
+  #   - data: The full dataset to sample from.
+  #   - features: Character vector of feature column names.
+  #   - id, label: Column names for ID and label.
+  #   - model_class: Model type ("naivebayes", "knn", etc.).
+  #   - test: If a test dataframe is input, will not generate splits, and will use test set instead
+  #   - train_size: Proportion of data used for training each trial.
+  #   - scale: Whether to apply scaling.
+  #   - k: k value for k-NN. When NULL, defaults to sqrt(train size)
+  #   - seed: Base random seed for reproducibility.
+  #   - render_results: whether or not to produce plots
+  #
+  # Returns:
+  #   A list containing:
+  #     - eval: The eval dataset used to compute cost impact and sensitivity
+  #.    - accuracy: The accuracy of model predictions
+  #     - metrics: Model performance matrix
+  #     - cm: A table of predictions vs actual labels
+  #     - impact: Trial-level cost impacts
+  #     - cm_plot: A rendered CM of the prediction results
+  #     - impact_table: A table that summarizes metrics and  cost impact projections
+  #     - sensitivity_matrix: A plot that probes the models sensitivity across subgroups
+  
+  set.seed(seed)
+  
+  
+  # --- Split into train/test (if test not provided) ---
+  if (is.null(test)) {
+    splits <- train_test_split(data, train_size=train_size)
+  } else {
+    splits <- list(
+      train = data,
+      test = test
+    )
+  }
+  splits <- engineer_features(splits, choices = engineered_features)
+  sanity_check(splits, features, id=id, label=label)
+  
+  
+  splits <- slice_train_test(splits, features, label)
+  predictions <- get_predictions(
+    splits, 
+    model_class, 
+    k=k,
+    group_col = group_col,
+    label = label,
+    balance = balance
+    )
+
+
+  # --- Evaluate performance ---
+  cm <- caret::confusionMatrix(predictions, splits$test.Y, positive = "Yes")
+  metrics <- as.data.frame(t(cm$byClass))  # transpose so it becomes 1-row data frame
+  metrics$Accuracy <- cm$overall["Accuracy"]
+  eval <- get_eval_df(splits$test, predictions)
+
+    # --- Output ---
+  res <- list(
+    eval = eval,
+    confusion_matrix = cm$table,
+    metrics = metrics,
+    impact = summarise_cost_impact(eval)
+  )
+
+  if (render_results) {
+    res$cm_plot <- plot_confusion_matrix(res$confusion_matrix)
+    res$impact_table <- render_cost_impact_table(res)
+    res$sensitivity_matrix <- plot_sensitivity_matrix(eval)
+  }
+
+  return(res)
+}
+
+post_process_impact <- function(all_impact, train_size, n_trials) {
+  
+  # Collapses cost_impact data, uses a weighted average to project company-wide 
+  # cost impact
+  
+  # scaling factor: 1 / n_trials / test proportion
+  scaling_factor <- 1 / n_trials / (1 - train_size)
+  
+  all_impact %>%
+    summarise(across(where(is.numeric), sum, na.rm = TRUE)) %>%
+    mutate(across(where(is.numeric), ~ .x * scaling_factor))
+}
+
+render_cost_impact_table_circuit <- function(metrics_df, impact_df) {
+  
+  # Generates a presentation ready table from the combined cost impact data.
+  
+  tibble_df <- tibble::tibble(
+    Metric = c(
+      "Accuracy",
+      "Sensitivity",
+      "Specificity",
+      "Balanced Acc",
+      "F1",
+      "Cost of No Action",
+      "Cost of Intervention",
+      "Realised Attrition",
+      "Unrealised Attrition",
+      "Potential Net Benefit"
+    ),
+    Value = c(
+      percent(metrics_df$Accuracy, accuracy = 0.1),
+      percent(metrics_df$Sensitivity, accuracy = 0.1),
+      percent(metrics_df$Specificity, accuracy = 0.1),
+      percent(metrics_df$`Balanced Accuracy`, accuracy = 0.1),
+      number(metrics_df$F1, accuracy = 0.001),
+      dollar(impact_df$CostOfNoAction, scale = 1, accuracy = 1000),
+      dollar(impact_df$TotalInterventionCost, scale = 1, accuracy = 1000),
+      dollar(impact_df$RealisedAttritionLoss, accuracy = 1000),
+      dollar(impact_df$UnrealisedAttritionLoss, accuracy = 1000),
+      dollar(impact_df$PotentialNetBenefit, scale = 1, accuracy = 1000)
+    )
+  )
+  
+  tibble_df %>% gt() %>% summary_table_formatting()
+}
+
+model_eval_circuit <- function(
+    data,
+    features,
+    engineered_features = c(),
+    n_trials = 100,
+    id = "ID",
+    label = "Attrition",
+    model_class = "naivebayes",
+    balance = FALSE,
+    group_col = NULL,
+    train_size = 0.7,
+    k = NULL,
+    seed = 101,
+    render_results = TRUE,
+    verbose = TRUE
+) {
+  
+  # Repeated model evaluation over multiple random splits.
+  #
+  # Args:
+  #   - data: The full dataset to sample from.
+  #   - features: Character vector of feature column names.
+  #   - n_trials: Number of random splits to evaluate.
+  #   - id, label: Column names for ID and label.
+  #   - model_class: Model type ("naivebayes", "knn", etc.).
+  #   - train_size: Proportion of data used for training each trial.
+  #   - scale: Whether to apply scaling.
+  #   - k: k value for k-NN (if applicable).
+  #   - seed: Base random seed for reproducibility.
+  #   - verbose: Whether to print progress updates.
+  #
+  # Returns:
+  #   A list containing:
+  #     - eval: The eval dataset used to compute cost impact and sensitivity
+  #     - metrics: Trial-level metrics (long-form)
+  #     - cm: Combined confusion matrices (tidy form)
+  #     - impact: Trial-level cost impacts (if available)
+  #     - cm_plot: A rendered CM of the prediction results
+  #     - impact_table: A table that summarizes metrics and  cost impact projections
+  #     - sensitivity_matrix: A plot that probes the models sensitivity across subgroups
+
+  
+  set.seed(seed)
+  
+  all_eval <- tibble()
+  all_metrics <- tibble()
+  all_cm <- tibble()
+  all_impact <- tibble()
+  
+  for (i in seq_len(n_trials)) {
+    if (verbose && i %% 10 == 0) {
+      message("Running trial ", i, "/", n_trials, "...")
+    }
+    
+    res <- model_eval(
+      data = data,
+      features = features,
+      engineered_features = engineered_features,
+      id = id,
+      label = label,
+      balance = balance,
+      group_col = group_col,
+      model_class = model_class,
+      train_size = train_size,
+      k = k,
+      render_results = TRUE,
+      seed = seed + i
+    )
+    
+    trial_eval <- res$eval
+    trial_eval$trial <- 1
+    all_eval <- bind_rows(all_eval, trial_eval)
+    
+    # --- Metrics ---
+    trial_metrics <- as_tibble(res$metrics)
+    trial_metrics$trial <- factor(i)
+    all_metrics <- bind_rows(all_metrics, trial_metrics)
+    
+    # --- Confusion matrix ---
+    trial_cm <- as.data.frame(res$confusion_matrix) %>%
+      as_tibble() %>%
+      mutate(trial = i)
+    all_cm <- bind_rows(all_cm, trial_cm)
+    
+    # --- Impact summary ---
+    trial_impact <- res$impact
+    all_impact <- bind_rows(all_impact, trial_impact)
+    
+  }
+  
+  metrics_summary <- all_metrics %>% 
+    summarise(across(where(is.numeric), mean, na.rm = TRUE))
+  
+  all_cm <- all_cm %>% 
+    group_by(Prediction, Reference) %>% 
+    summarize(Freq = sum(Freq), .groups = "drop"
+              )
+  
+  all_impact <- post_process_impact(all_impact, train_size, n_trials)
+  
+  final_result <- list(
+      eval = all_eval,
+      metrics = all_metrics,
+      cm = all_cm,
+      impact = all_impact
+    )
+  
+  if (render_results) {
+    final_result$cm_plot <- plot_confusion_matrix(all_cm, relative = TRUE)
+    final_result$impact_table <- render_cost_impact_table_circuit(metrics_summary, all_impact)
+    final_result$sensitivity_matrix <- plot_sensitivity_matrix(all_eval)
+  }
+  
+  return(final_result)
+  
+}
+
+```
+---------------------------------
+
+## EDA FUNCTIONS
+---------------------------------
+```{r}
+
+summarise_attrition <- function(
+    df, 
+    group_var, 
+    arrange_col = AttritionRate, 
+    descending = TRUE) {
+  
+  # Summarizes employee attrition by a specified grouping variable.
+  #
+  # Arguments:
+  #   - df: A data frame containing employee data, including an 'Attrition' column.
+  #   - group_var: The column to group by (e.g., Department, Team).
+  #   - arrange_col: The column to sort the summary by (e.g., AttritionRate, N_Employees).
+  #   - descending: Logical. If TRUE, sorts in descending order; otherwise ascending.
+  #
+  # Returns:
+  #   - A summarized data frame with one row per group, including:
+  #       * N_Employees: Number of employees in the group.
+  #       * N_Attrited: Number of employees who have attrited ("Yes").
+  #       * AttritionRate: Proportion of employees who have attrited.
+  #     The summary also includes a final row labeled "TOTAL" with aggregated values across all groups.
+
+  
+  # Capture the grouping variable
+  group_sym <- rlang::ensym(group_var)
+  arrange_sym <- rlang::ensym(arrange_col)
+  
+  df_summary <- df %>%
+    group_by(!!group_sym) %>% 
+    summarize(
+      N_Employees = n(),
+      N_Attrited = sum(Attrition == "Yes", na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      AttritionRate = N_Attrited / N_Employees
+    ) %>%
+    ungroup()
+  
+  # Arrange by specified column
+  if (descending) {
+    df_summary <- df_summary %>% arrange(desc(!!arrange_sym))
+  } else {
+    df_summary <- df_summary %>% arrange(!!arrange_sym)
+  }
+  
+  # Add total row
+  df_summary %>%
+    bind_rows(
+      summarise(
+        .,
+        !!group_sym := "TOTAL",
+        N_Employees = sum(N_Employees),
+        N_Attrited = sum(N_Attrited),
+        AttritionRate = sum(N_Attrited) / sum(N_Employees)
+      )
+    )
+}
+
+summarise_waste <- function(
+    df, 
+    group_var, 
+    arrange_col = WasteRate, 
+    descending = TRUE
+    ) {
+  
+  # Summarizes payroll "waste" due to employee attrition by a specified grouping variable.
+  #
+  # Arguments:
+  #   - df: A data frame containing employee data, including 'Attrition' and 'MonthlyIncome' columns.
+  #   - group_var: The column to group by (e.g., Department, Team).
+  #   - arrange_col: The column to sort the summary by (default is WasteRate).
+  #   - descending: Logical. If TRUE, sorts in descending order; otherwise ascending.
+  #
+  # Returns:
+  #   - A summarized data frame with one row per group, including:
+  #       * Payroll: Total annual salary of all employees in the group.
+  #       * Waste: Total annual salary lost due to employees who attrited ("Yes").
+  #       * WasteRate: Proportion of payroll lost due to attrition (Waste / Payroll).
+  #     The summary also includes a final row labeled "TOTAL" with aggregated values across all groups.
+  
+  # Capture the grouping variable
+  group_sym <- rlang::ensym(group_var)
+  arrange_sym <- rlang::ensym(arrange_col)
+  
+  df_summary <- df %>%
+    # Compute annual salary
+    mutate(AnnualSalary = 12 * MonthlyIncome) %>%
+    
+    # Keep only relevant columns
+    select(!!group_sym, Attrition, AnnualSalary) %>%
+    
+    # Summarize by group and attrition
+    group_by(!!group_sym, Attrition) %>%
+    summarize(Total_Salary = sum(AnnualSalary), .groups = "drop") %>%
+    
+    # Pivot so Yes/No attrition becomes separate columns
+    pivot_wider(
+      names_from = Attrition,
+      values_from = Total_Salary,
+      values_fill = 0
+    ) %>%
+    
+    # Compute waste metrics
+    mutate(
+      Waste = `Yes`,
+      Payroll = `Yes` + `No`,
+      WasteRate = Waste / Payroll
+    ) %>%
+    
+    # Select final columns
+    select(!!group_sym, Payroll, Waste, WasteRate) %>%
+    ungroup()
+  
+  # Arrange by specified column
+  if (descending) {
+    df_summary <- df_summary %>% arrange(desc(!!arrange_sym))
+  } else {
+    df_summary <- df_summary %>% arrange(!!arrange_sym)
+  }
+  
+  # Add total row
+  df_summary %>%
+    bind_rows(
+      summarise(
+        .,
+        !!group_sym := "TOTAL",
+        Payroll = sum(Payroll),
+        Waste = sum(Waste),
+        WasteRate = sum(Waste) / sum(Payroll)
+      )
+    )
+}
+
+
+render_attrition_table <- function(
+    df, 
+    group_var, 
+    table_title = "Attrition Summary", 
+    group_label = NULL
+    ) {
+  
+  # Renders a presentation ready table that summarises attrion.
+  
+  group_col <- rlang::as_name(rlang::enquo(group_var))
+  stub_label <- ifelse(is.null(group_label), group_col, group_label)
+  
+  df %>%
+    gt(rowname_col = group_col) %>%
+    tab_stubhead(label = stub_label) %>%
+    cols_label(
+      N_Employees = "Total Employees",
+      N_Attrited = "Attrited Employees",
+      AttritionRate = "Attrition Rate"
+    ) %>%
+    fmt_percent(columns = AttritionRate, decimals = 1) %>%
+    fmt_number(columns = c(N_Employees, N_Attrited), decimals = 0) %>%
+    tab_header(
+      title = md(paste0("**", table_title, "**"))
+    ) %>%
+    summary_table_formatting()  
+}
+
+render_waste_table <- function(
+    df, 
+    group_var, 
+    table_title = "Salary Waste Summary", 
+    group_label = NULL) {
+  
+  # Renders a presentation ready table that summarises salary waste.
+
+  group_col <- rlang::as_name(rlang::enquo(group_var))
+  stub_label <- ifelse(is.null(group_label), group_col, group_label)
+  
+  df %>%
+    ungroup() %>%
+    gt(rowname_col = group_col) %>%
+    tab_stubhead(label = stub_label) %>%
+    cols_label(
+      Payroll = "Total Payroll",
+      Waste = "Attrition Waste",
+      WasteRate = "Waste Rate"
+    ) %>%
+    fmt_currency(columns = c(Payroll, Waste), currency = "USD", decimals = 0) %>%
+    fmt_percent(columns = WasteRate, decimals = 1) %>%
+    tab_header(
+      title = md(paste0("**", table_title, "**"))
+    ) %>%
+    summary_table_formatting()   
+}
+
+
+calc_residuals <- function(
+    df, 
+    x, 
+    y, 
+    groups = NULL, 
+    threshold = 0.2) {
+  
+  # Calculates residuals from a simple linear model.
+  # 
+  # Fits a linear model using the given dependent (y) and independent (x) variables,
+  # and appends the residuals as a new column in the dataset. If grouping variables
+  # are provided, a separate model is fit within each group.
+  #
+  # Args:
+  #   df: Data frame containing the variables.
+  #   x: String. Name of the independent (predictor) variable.
+  #   y: String. Name of the dependent (response) variable.
+  #   groups: Optional character vector. Columns to group by for group-wise models.
+  #   residuals_col: Optional string. Name of the output column for residuals. Defaults to "residual".
+  #   threshold: For classifying residuals as Above or Below Expected
+  #
+  # Returns:
+  #   The input data frame with an added column containing residuals.
+  
+  classify_residual <- function(resid, threshold) {
+    case_when(
+      resid > threshold ~ "Above Expected",
+      resid < -threshold ~ "Below Expected",
+      TRUE ~ "Around Expected"
+    )
+  }
+
+  if (is.null(groups)) {
+    model <- lm(reformulate(x, y), data = df)
+    preds <- predict(model, df)
+    df$residual <- (df[[y]] - preds) / df[[y]]
+    df$residual_class <- classify_residual(df$residual, threshold)
+
+  } else {
+    df <- df %>%
+      group_by(across(all_of(groups))) %>%
+      mutate(
+        residual = {
+          model <- lm(reformulate(x, y), data = cur_data())
+          preds <- predict(model, cur_data())
+          (cur_data()[[y]] - preds) / cur_data()[[y]]
+        },
+        residual_class = factor(
+          classify_residual(residual, threshold),
+          levels = c("Below Expected", "Around Expected", "Above Expected")
+          ) 
+      )%>%
+      ungroup()
+  }
+
+  df
+}
+
+
+residual_dot_plot <- function(
+  residuals_df,
+  x,
+  y = "residual",
+  color = "Attrition",
+  threshold = 0.2,
+  xlab = NULL,
+  ylab = "Residual (ratio to actual income)",
+  title = "Relative Pay vs. Time at Company"
+) {
+  
+  # Generates a presentation ready dot plot for showing attrition in relation
+  # to income expectations.
+
+  ggplot(
+    residuals_df,
+    aes(x = .data[[x]], y = .data[[y]], color = .data[[color]])
+  ) +
+    # --- shaded regions ---
+    annotate(
+      "rect",
+      xmin = -Inf, xmax = Inf, ymin = threshold, ymax = Inf,
+      fill = green, alpha = 0.08
+    ) +
+    annotate(
+      "rect",
+      xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = -threshold,
+      fill = magenta, alpha = 0.08
+    ) +
+
+    # --- points and reference lines ---
+    geom_jitter(size = 1) +
+    geom_hline(yintercept = threshold, linetype = "dashed", color = green) +
+    geom_hline(yintercept = -threshold, linetype = "dashed", color = magenta) +
+
+    # --- colors and theme ---
+    scale_color_manual(
+      values = c(
+        "No" = scales::alpha(base1, 0.2),
+        "Yes" = red
+      )
+    ) +
+    labs(
+      x = ifelse(is.null(xlab), x, xlab),
+      y = ylab,
+      title = title
+    ) +
+    ggthemes::theme_solarized(base_size = 18)
+}
+
+plot_attrition_heatmap <- function(
+    residual_df, 
+    x_var,
+    y_var,
+    title = "Heatmap of Attrition Rate",
+    xlab = NULL,
+    ylab = NULL
+) {
+  
+  # Probes the distribution of attrition across two selected categorical
+  # features.
+  
+  # Convert variable inputs to symbols for tidy evaluation
+  x_sym <- ensym(x_var)
+  y_sym <- ensym(y_var)
+  
+  # Default labels
+  if (is.null(xlab)) xlab <- as_string(x_sym)
+  if (is.null(ylab)) ylab <- as_string(y_sym)
+  
+  # Compute attrition rate by x × y
+  attrition_summary <- residual_df %>%
+    group_by(!!x_sym, !!y_sym) %>%
+    summarise(
+      n = n(),
+      attrition_rate = mean(Attrition == "Yes", na.rm = TRUE) * 100,
+      .groups = "drop"
+    )
+  
+  # Plot heatmap
+  p <- ggplot(attrition_summary, aes(x = !!x_sym, y = !!y_sym, fill = attrition_rate)) +
+    geom_tile(color = base3, width = 0.9, height = 0.9) +
+    geom_text(aes(label = sprintf("%.1f%%", attrition_rate)), color = "black", size = 6) +
+    scale_fill_gradient(low = base3, high = cyan, name = "Attrition Rate (%)") +
+    labs(
+      title = title,
+      x = xlab,
+      y = ylab
+    ) +
+    theme_solarized(base_size = 18) +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+  
+  return(p)
+}
+
+
+quality_of_life_plot <- function(
+  df,
+  x = "Attrition",
+  fill = "Attrition",
+  facet_row = "WorkLifeBalance",
+  facet_col = "OverTime",
+  colors = c("No" = cyan, "Yes" = red),
+  title = "Attrition vs. Quality of Life",
+  subtitle = "For all employees",
+  xlab = NULL,
+  ylab = NULL
+) {
+  # Default labels if not provided
+  if (is.null(xlab)) xlab <- facet_col
+  if (is.null(ylab)) ylab <- facet_row
+  
+  ggplot(df, aes_string(x = x, fill = fill)) +
+    geom_bar() +
+    geom_text(
+      stat = "count",
+      aes(label = ..count..),
+      vjust = -0.5
+    ) +
+    scale_fill_manual(values = colors) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.3))) +
+    facet_grid(
+      as.formula(paste(facet_row, "~", facet_col)),
+      switch = "both"
+    ) +
+    theme_solarized(base_size = 16) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      fill = fill,
+      x = xlab,
+      y = ylab
+    ) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      strip.placement = "outside"
+    )
+}
+```
+
+---------------------------------
+## WHO IS ATTRITING?
+---------------------------------
+```{r}
+
+# We start with the big pictures questions. What percentage of employees 
+# are attriting? Which deparetments? Which Job Levels? How much does this all
+# cost?
+
+data %>% 
+  group_by(Attrition) %>% 
+  summarize(Count = n()) %>%
+  mutate(Proportion = Count / sum(Count)) %>% 
+  ggplot(aes(x = "", y = Proportion, fill = Attrition)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  geom_text(
+    aes(label = paste0(round(Proportion * 100, 1), "%")), 
+    position = position_stack(vjust = 0.5),
+    color = base3, size = 6, fontface = "bold"
+  ) +
+  scale_fill_manual(values = c("No" = cyan, "Yes" = red)) +
+  labs(
+    title = "Overall Attrition Rate",
+    subtitle = paste0("Total Employees: ", nrow(data)),
+    fill = "Attrition"
+  ) +
+  theme_solarized(base_size = 18) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+ggsave("Project/01_pie_chart_of_total_attrition.png", create.dir = TRUE, width = 6, height =6)
+
+
+
+DepartmentAttrition <- summarise_attrition(data, Department)
+gtsave(
+  render_attrition_table(DepartmentAttrition, Department),
+  "Project/02_summary_of_department_attrition.png"
+)
+
+
+DepartmentWaste <- summarise_waste(data, Department)
+gtsave(
+  render_waste_table(DepartmentWaste, Department),
+  "Project/03_summary_of_department_attrition.png"
+)
+
+data %>%
+  filter(Attrition == "Yes") %>% 
+  group_by(JobLevel, Department) %>% 
+  summarize(Attrition_Count = n()) %>%
+  ungroup() %>%
+  group_by(Department) %>%
+  mutate(Total_Attrition_in_Department = sum(Attrition_Count)) %>%
+  mutate(Percent_Attrition = (Attrition_Count / Total_Attrition_in_Department) * 100) %>%
+  select(Department, JobLevel, Attrition_Count, Percent_Attrition) %>% 
+  ggplot(aes(x = factor(JobLevel), y = Department, fill = Percent_Attrition)) +
+  geom_tile(color = base3) +
+  geom_text(aes(label = sprintf("%.1f%%", Percent_Attrition)), color = "black", size = 8, fontface = "bold") +
+  scale_fill_gradient(low = base3, high = cyan, name = "Attrition (%)") +
+  labs(
+    title = "Attrition Heatmap",
+    x = "Job Level",
+    y = "Department"
+  ) +
+  theme_solarized(base_size = 20) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(face = "bold", angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "bold")
+  )
+ggsave("Project/04_heatmap_of_attrition_by_department_and_level.png", width = 10, height =8)
+
+# Process and render tables that summarises waste and attrition by Job Level
+
+JobLevelAttrition <- summarise_attrition(data, JobLevel, arrange_col = JobLevel, descending = FALSE )
+gtsave(
+  render_attrition_table(JobLevelAttrition, JobLevel, group_label = "Job Level"),
+  "Project/05_summary_of_job_level_attrition.png"
+)
+
+JobLevelWaste <- summarise_waste(data, JobLevel, arrange_col = JobLevel, descending = FALSE)
+gtsave(
+  render_waste_table(JobLevelWaste, JobLevel, group_label = "Job Level"),
+  "Project/06_summary_of_job_level_waste.png"
+)
+
+data %>% 
+  filter(Attrition == "Yes") %>% 
+  ggplot(aes(x = YearsAtCompany, y = Department, fill = Department)) +
+  geom_density_ridges() +
+  theme_solarized(base_size = 20) +
+  labs(
+    title = "Density Plot of Attrition by Years at Frito-Lay",
+    x = "Years at Company"
+  ) +
+  theme (
+    axis.title.y = element_blank(),
+    legend.position = "none"
+    
+  )
+ggsave("Project/07_density_plot_of_attrition_by_years.png", width = 10, height =8)
+
+
+```
+---------------------------------
+## WHY DO EMPLOYEES LEAVE
+---------------------------------
+
+```{r}
+
+# This trio plots probes attrition in relation to two important factors:
+# Work Life Balance and Overtime.
+
+quality_of_life_plot(
+  data, 
+  xlab = "Overtime",
+  ylab = "Work Life Balance"
+  )
+ggsave("Project/07_QoL_all.png", width =9, height = 6)
+
+# The next two isolate lower and upper level employees, showing that
+# quality of life is more important for lower level employees.
+
+quality_of_life_plot(
+  data %>% filter(JobLevel %in% c("Entry", "Junior")), 
+  xlab = "Overtime",
+  ylab = "Work Life Balance",
+  subtitle = "For Entry and Junior Employees"
+  )
+ggsave("Project/08_QoL_jr.png", width =9, height = 6)
+
+quality_of_life_plot(
+  data %>% filter(!JobLevel %in% c("Entry", "Junior")), 
+  xlab = "Overtime",
+  ylab = "Work Life Balance",
+  subtitle = "For Mid, Senior, and Excecutive Employees"
+  )
+ggsave("Project/09_QoL_sr.png", width =9, height = 6)
+
+# This next investigation focuses on income. It calculates a residual that
+# computes expected income as a function of `YearsSinceLastPromotion`, JobLevel,
+# and Department.
+#
+# After computing residuals, its more clear that lower paid employees are more
+# likely to leave.
+
+residuals <- calc_residuals(
+  data,
+  "YearsSinceLastPromotion",
+  "MonthlyIncome",
+  groups = c("JobLevel", "Department"),
+  threshold = 0.15
+  )
+
+p1 <- residual_dot_plot(
+  residuals,
+  "YearsSinceLastPromotion",
+  xlab = "Years Since Last Promotion",
+  title = "Income Residuals vs. Years at Company",
+  threshold = 0.15
+)
+
+p2 <- plot_attrition_heatmap(
+  residuals,
+  "residual_class",
+  "JobLevel",
+  title = "Attrition Rate across Income Residuals",
+  xlab = "Actual vs. Expected Income",
+  ylab = "Job Level"
+)
+
+p1 / p2
+ggsave("Project/10_income_residuals.png", width =6, height = 10)
+
+# Probes the impact of another important reward, StockOptionLevel.
+#
+# Interesting, the impact was not linear. Groups with None and High Stock Options
+# were more likely to attrite, while the other levels leave a ta.lower rate.
+
+p3 <- plot_attrition_heatmap(
+  residuals,
+  "StockOptionLevel",
+  "JobLevel",
+  title = "Attrition Rate by Stock Option Level",
+  xlab = "Stock Option Level",
+  ylab = "Job Level"
+)
+
+p4 <- plot_attrition_heatmap(
+  residuals %>% filter(residual_class == "Above Expected"),
+  "StockOptionLevel",
+  "JobLevel",
+  title = "Only Highly Paid Employees",
+  xlab = "Stock Option Level",
+  ylab = "Job Level"
+)
+
+p3 / p4
+
+ggsave("Project/11_stock_option_heatmap.png", width =6, height = 10)
+```
+
+---------------------------------
+## MODEL EVALUATIONS
+---------------------------------
+
+```{r}
+# Final Evalation that compares the models. Most graphics are 
+# generated in the pipeline. A final evaluation compares metrics of
+# the trial results.
+
+nb_features <- all_of(c(KYE, Reward, CareerProgression, QualityOfLife))
+nb_results <- model_eval_circuit(
+  data,
+  features = nb_features,
+  n_trials = 1000
+)
+
+names(nb_results)
+nb_results$impact_table
+nb_results$cm_plot
+
+ggsave("Project/13_nb_cm_plot.png", width = 8, height = 8)
+nb_results$sensitivity_matrix
+ggsave("Project/14_nb_sensitivity_matrix.png", width = 8, height = 8)
+gtsave(
+  nb_results$impact_table,
+  "Project/15_nb_cost_impact.png")
+
+
+knn_features <-c(
+    "MonthlyIncome",
+    "JobRole",
+    "OverTime",
+    "WorkLifeBalance",
+    "StockOptionLevel",
+    "YearsWithCurrManager",
+    "PercentSalaryHike",
+    "RelationshipSatisfaction"
+    )
+
+knn_results <- model_eval_circuit(
+  data,
+  features = knn_features,
+  engineered_features = c("DepartmentGroup"),
+  model_class = "knn",
+  n_trials = 1000,
+  balance = TRUE,
+  group_col = "DepartmentGroup"
+)
+
+knn_results$cm_plot
+knn_results$sensitivity_matrix
+knn_results$impact_table
+
+knn_results$cm_plot
+ggsave("Project/16_knn_cm_plot.png", width = 8, height = 8)
+knn_results$sensitivity_matrix
+ggsave("Project/17_nb_sensitivity_matrix.png", width = 8, height = 8)
+gtsave(
+  knn_results$impact_table,
+  "Project/18_knn_cost_impact.png")
+
+
+nb_metrics <- nb_results$metrics
+knn_metrics <- knn_results$metrics
+
+# --- Combine model metrics ---
+combined_metrics <- bind_rows(
+  nb_metrics %>% mutate(Model = "Naive Bayes"),
+  knn_metrics %>% mutate(Model = "k-NN")
+)
+
+# --- Compute density counts for each Model ---
+heat_data <- combined_metrics %>%
+  mutate(
+    Sensitivity_bin = cut(Sensitivity, breaks = seq(0, 1, by = 0.05), include.lowest = TRUE),
+    Specificity_bin = cut(Specificity, breaks = seq(0, 1, by = 0.05), include.lowest = TRUE)
+  ) %>%
+  group_by(Model, Sensitivity_bin, Specificity_bin) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  mutate(
+    Sensitivity_mid = as.numeric(sub("\\((.+),.*", "\\1", Sensitivity_bin)) + 0.025,
+    Specificity_mid = as.numeric(sub("\\((.+),.*", "\\1", Specificity_bin)) + 0.025
+  )
+
+# --- Plot heatmap ---
+ggplot(heat_data, aes(x = Specificity_mid, y = Sensitivity_mid, fill = Count)) +
+  geom_tile(color = "white", size = 0.2) +
+  facet_wrap(~ Model) +
+  scale_fill_viridis_c(option = "C", trans = "sqrt") +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_x_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Model Performance Across 1000 Trials",
+    x = "Specificity",
+    y = "Sensitivity",
+    fill = "N Trials"
+  ) +
+  theme_solarized(base_size = 18) +
+  theme(
+    panel.grid = element_blank(),
+    strip.text = element_text(face = "bold")
+  )
+ggsave("Project/19_model_metrics_heatmap.png", width = 8, height = 4)
+```
+---------------------------------
+## TEST SET PREDICTIONS
+## (Brute Force Naive Bayes)
+---------------------------------
+```{r}
+features = all_of(c(KYE, Reward, CareerProgression, QualityOfLife))
+
+train <- data
+test = read_csv(file.choose())
+
+#Set Factors
+test$BusinessTravel <- factor(
+  test$BusinessTravel,
+  levels = c("Non-Travel", "Travel_Rarely", "Travel_Frequently"),
+  ordered = TRUE
+)
+test$Department <- as.factor(test$Department)
+test$Education <- factor(
+  test$Education,
+  labels = c("Below College", "College", "Bachelor", "Master", "Doctor"),
+  ordered = TRUE
+)
+test$EducationField <- as.factor(test$EducationField)
+test$Gender <- as.factor(test$Gender)
+test$JobInvolvement <- factor(
+  test$JobInvolvement,
+  labels = c("Low", "Medium", "High", "Very High"),
+  ordered = TRUE
+)
+test$JobLevel <- factor(
+  test$JobLevel,
+  labels = c("Entry", "Junior", "Mid", "Senior", "Executive"),
+  ordered = TRUE
+)
+test$JobRole <- as.factor(test$JobRole)
+test$MaritalStatus <- as.factor(test$MaritalStatus)
+test$Over18 <- as.factor(test$Over18)
+test$OverTime <- as.factor(test$OverTime)
+test$PerformanceRating <- factor(
+  test$PerformanceRating,
+  levels = c(1, 2, 3, 4),
+  labels = c("Low", "Medium", "High", "Very High"),
+  ordered = TRUE
+)
+test$RelationshipSatisfaction <- factor(
+  test$RelationshipSatisfaction,
+  labels = c("Low", "Medium", "High", "Very High"),
+  ordered = TRUE
+)
+test$StockOptionLevel <- factor(
+  test$StockOptionLevel,
+  labels = c("None", "Low", "Medium", "High"),
+  ordered = TRUE
+)
+test$WorkLifeBalance <- factor(
+  test$StockOptionLevel,
+  labels = c("Bad", "Good", "Better", "Best"),
+  ordered = TRUE
+)
+
+splits <- list(
+  train.X = train[ , features, drop = FALSE],
+  train.Y = as.factor(train$Attrition),
+  test.X  = test[ , features, drop = FALSE]
+)
+  
+predictions <- get_naivebayes_predictions(splits)
+output <- test %>% 
+  select(ID) %>% 
+  mutate(Attrition = predictions)
+```
+
+
+
+
+
+
+
