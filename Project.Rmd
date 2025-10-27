@@ -34,9 +34,11 @@ library(rlang)
 library(themis)
 library(ggridges)
 library(smotefamily)
+library(rstudioapi)
 
 #Load Data
-data <- read.csv(file.choose())
+setwd(dirname(getActiveDocumentContext()$path))
+data <- read.csv("CaseStudy1-data.csv")
 
 #Set Factors
 data$Attrition <- as.factor(data$Attrition)
@@ -146,13 +148,6 @@ CareerProgression <- c(
   "YearsSinceLastPromotion",
   "YearsWithCurrManager"
 )
-
-data %>% 
-  select(JobLevel, StockOptionLevel, Attrition) %>% 
-  filter(
-    JobLevel == "Entry",
-    StockOptionLevel == "High"
-  ) 
 ```
 
 ---------------------------------
@@ -284,13 +279,12 @@ apply_scaling <- function(splits) {
   return(splits)
 }
 
-apply_smote <- function(splits, perc_over = 200, perc_under = 200, k = 5, label = "Attrition") {
+apply_smote <- function(splits, dup_size = 4, k = 5, label = "Attrition") {
   # Applies SMOTE balancing to the training data in 'splits'.
   #
   # Args:
   #   - splits: A list with elements train.X and train.Y.
-  #   - perc_over: Percentage of over-sampling for minority classes.
-  #   - perc_under: Percentage of under-sampling for majority classes (not used here).
+  #   - dup_size: Optional multiplier for oversampling (overridden if dynamic).
   #   - k: Number of nearest neighbors for SMOTE.
   #   - label: Name of the target column.
   #
@@ -300,19 +294,25 @@ apply_smote <- function(splits, perc_over = 200, perc_under = 200, k = 5, label 
   # Combine features and label into one data frame for SMOTE
   train_data <- data.frame(splits$train.X, target = splits$train.Y)
   
-  # Count samples in the smallest class
+  # Count samples in each class
   class_counts <- table(train_data$target)
   min_class_size <- min(class_counts)
+  max_class_size <- max(class_counts)
   
   # Ensure K < min_class_size
   k_safe <- min(k, min_class_size - 1)
   if (k_safe < 1) k_safe <- 1
   
+  # Dynamically compute dup_size as ratio of majority/minority class sizes
+  dup_size <- round(max_class_size / min_class_size)
+  
   # Apply SMOTE
-  smote_result <- smotefamily::SMOTE(X = train_data[, -ncol(train_data)],
-                                     target = train_data$target,
-                                     K = k_safe,
-                                     dup_size = perc_over / 100)
+  smote_result <- smotefamily::SMOTE(
+    X = train_data[, -ncol(train_data)],
+    target = train_data$target,
+    K = k_safe,
+    dup_size = dup_size
+  )
   
   balanced <- smote_result$data
   # The last column is the target variable created by SMOTE
@@ -324,6 +324,7 @@ apply_smote <- function(splits, perc_over = 200, perc_under = 200, k = 5, label 
   
   return(splits)
 }
+
 
 # ---------------------------------
 # FEATURE ENGINEERING
@@ -569,7 +570,7 @@ get_predictions <- function(
   test <- splits$test
   
   # Store predictions in same order as test
-  preds <- factor(rep(NA, nrow(test)), levels = levels(splits$test.Y))
+  preds <- factor(rep(NA, nrow(test)), levels = levels(splits$train.Y))
   
   # Iterate over each group present in test data
   for (grp in unique(test[[group_col]])) {
@@ -607,7 +608,7 @@ get_predictions <- function(
 # of random splits.
 # ---------------------------------
 
-get_eval_df <- function(test, predictions, attrition_multiplier = 12, intervention_multiplier = 3)   {
+get_eval_df <- function(test, predictions, attrition_multiplier = 12, intervention_multiplier = 2)   {
   
   # Prepares an evaluation DataFrame to assess the cost impact of attrition 
   # and interventions, and to evaluate specificity across departments and job levels.
@@ -1136,6 +1137,7 @@ model_eval_circuit <- function(
 }
 
 ```
+
 ---------------------------------
 
 ## EDA FUNCTIONS
@@ -1700,15 +1702,16 @@ residuals <- calc_residuals(
   threshold = 0.15
   )
 
-p1 <- residual_dot_plot(
+residual_dot_plot(
   residuals,
   "YearsSinceLastPromotion",
   xlab = "Years Since Last Promotion",
   title = "Income Residuals vs. Years at Company",
   threshold = 0.15
 )
+ggsave("Project/10_income_residuals.png", width =8, height = 8)
 
-p2 <- plot_attrition_heatmap(
+plot_attrition_heatmap(
   residuals,
   "residual_class",
   "JobLevel",
@@ -1717,8 +1720,7 @@ p2 <- plot_attrition_heatmap(
   ylab = "Job Level"
 )
 
-p1 / p2
-ggsave("Project/10_income_residuals.png", width =6, height = 10)
+ggsave("Project/10_income_residuals_heatmap.png", width =8, height = 8)
 
 # Probes the impact of another important reward, StockOptionLevel.
 #
@@ -1764,17 +1766,13 @@ nb_results <- model_eval_circuit(
   n_trials = 1000
 )
 
-names(nb_results)
-nb_results$impact_table
 nb_results$cm_plot
-
 ggsave("Project/13_nb_cm_plot.png", width = 8, height = 8)
 nb_results$sensitivity_matrix
 ggsave("Project/14_nb_sensitivity_matrix.png", width = 8, height = 8)
 gtsave(
   nb_results$impact_table,
   "Project/15_nb_cost_impact.png")
-
 
 knn_features <-c(
     "MonthlyIncome",
@@ -1785,6 +1783,7 @@ knn_features <-c(
     "YearsWithCurrManager",
     "PercentSalaryHike",
     "RelationshipSatisfaction"
+
     )
 
 knn_results <- model_eval_circuit(
@@ -1800,11 +1799,11 @@ knn_results <- model_eval_circuit(
 knn_results$cm_plot
 knn_results$sensitivity_matrix
 knn_results$impact_table
-
 knn_results$cm_plot
-ggsave("Project/16_knn_cm_plot.png", width = 8, height = 8)
+
+ggsave("Project/16_knn_cm_plot.png", width = 8, height = 8, create.dir = TRUE)
 knn_results$sensitivity_matrix
-ggsave("Project/17_nb_sensitivity_matrix.png", width = 8, height = 8)
+ggsave("Project/17_knn_sensitivity_matrix.png", width = 8, height = 8)
 gtsave(
   knn_results$impact_table,
   "Project/18_knn_cost_impact.png")
@@ -1837,7 +1836,10 @@ ggplot(heat_data, aes(x = Specificity_mid, y = Sensitivity_mid, fill = Count)) +
   geom_tile(color = "white", size = 0.2) +
   facet_wrap(~ Model) +
   scale_fill_viridis_c(option = "C", trans = "sqrt") +
-  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_y_continuous(
+  labels = percent_format(accuracy = 1),
+  sec.axis = dup_axis(name = NULL, labels = percent_format(accuracy = 1))
+) +
   scale_x_continuous(labels = percent_format(accuracy = 1)) +
   labs(
     title = "Model Performance Across 1000 Trials",
@@ -1857,45 +1859,25 @@ ggsave("Project/19_model_metrics_heatmap.png", width = 8, height = 4)
 ## (Brute Force Naive Bayes)
 ---------------------------------
 ```{r}
-features = all_of(c(KYE, Reward, CareerProgression, QualityOfLife))
+features = knn_features <-c(
+    "MonthlyIncome",
+    "JobRole",
+    "OverTime",
+    "WorkLifeBalance",
+    "StockOptionLevel",
+    "YearsWithCurrManager",
+    "PercentSalaryHike",
+    "RelationshipSatisfaction"
+    )
 
 train <- data
-test = read_csv(file.choose())
+test = read_csv("CaseStudy1CompSet No Attrition.csv")
 
 #Set Factors
-test$BusinessTravel <- factor(
-  test$BusinessTravel,
-  levels = c("Non-Travel", "Travel_Rarely", "Travel_Frequently"),
-  ordered = TRUE
-)
+
 test$Department <- as.factor(test$Department)
-test$Education <- factor(
-  test$Education,
-  labels = c("Below College", "College", "Bachelor", "Master", "Doctor"),
-  ordered = TRUE
-)
-test$EducationField <- as.factor(test$EducationField)
-test$Gender <- as.factor(test$Gender)
-test$JobInvolvement <- factor(
-  test$JobInvolvement,
-  labels = c("Low", "Medium", "High", "Very High"),
-  ordered = TRUE
-)
-test$JobLevel <- factor(
-  test$JobLevel,
-  labels = c("Entry", "Junior", "Mid", "Senior", "Executive"),
-  ordered = TRUE
-)
 test$JobRole <- as.factor(test$JobRole)
-test$MaritalStatus <- as.factor(test$MaritalStatus)
-test$Over18 <- as.factor(test$Over18)
 test$OverTime <- as.factor(test$OverTime)
-test$PerformanceRating <- factor(
-  test$PerformanceRating,
-  levels = c(1, 2, 3, 4),
-  labels = c("Low", "Medium", "High", "Very High"),
-  ordered = TRUE
-)
 test$RelationshipSatisfaction <- factor(
   test$RelationshipSatisfaction,
   labels = c("Low", "Medium", "High", "Very High"),
@@ -1912,16 +1894,27 @@ test$WorkLifeBalance <- factor(
   ordered = TRUE
 )
 
-splits <- list(
-  train.X = train[ , features, drop = FALSE],
-  train.Y = as.factor(train$Attrition),
-  test.X  = test[ , features, drop = FALSE]
+splits <- list (
+  train = train,
+  test = test
 )
+
+splits <- add_department_group(splits)
+splits$train.X <- splits$train[ , features, drop = FALSE]
+splits$train.Y <- as.factor(splits$train$Attrition)
+splits$test.X <- splits$test[ , features, drop = FALSE]
+
+
   
-predictions <- get_naivebayes_predictions(splits)
+predictions <- get_predictions(
+  splits,
+  model_class = "knn",
+  group_col = "DepartmentGroup",
+  balance = TRUE)
 output <- test %>% 
   select(ID) %>% 
   mutate(Attrition = predictions)
+
 ```
 
 
