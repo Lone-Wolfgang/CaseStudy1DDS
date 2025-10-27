@@ -30,7 +30,7 @@ This section includes metrics, which were averaged across 1000 trials.
 Metrics include cost impact, and the definitions follow:
   - Cost of Attrition: Annual Salary of all employees that leave.
   - Cost of No Action: Total attrition cost if no action is taken.
-  - Cost of Intervention: Quarterly (3 months) salary of all employees
+  - Cost of Intervention: Two month salary of all employees predicted to leave
   - Unrealised Attrition: True Positives, recoverable attrition loss from correctly predicted employees
   - Realized Attrition: False Negatives, unrecoverable attrition loss from employees that were not predicted to leave
   - Cost of Action: For calculating Potential Net Benefit: Cost of Intervention + Realized Attrition - Unrealized Attrition
@@ -47,10 +47,10 @@ Metrics include cost impact, and the definitions follow:
   - Speceficity: 83.9%
   - F1: 0.499
   - Cost of No Action: $8,059,000
-  - Cost of Intervention: $2,039,000
+  - Cost of Intervention: $1,359,000
   - Realised Attrition: $4,618,000
   - Unrealised Attrition: $3,441,000
-  - Potential Net Benefit: $1,402,000
+  - Potential Net Benefit: $2,081,000
 
 ### K-NN:
 
@@ -62,15 +62,15 @@ Metrics include cost impact, and the definitions follow:
       - Oversample examples of Attrition using SMOTE
 
 #### Performance: 
-  - Accuracy: 79.8%
-  - Sensitivity: 57.2%
-  - Speceficity: 84.2%
-  - F1: 0.476
+  - Accuracy: 70.7%
+  - Sensitivity: 70.7%
+  - Speceficity: 70.8%
+  - F1: 0.438
   - Cost of No Action: $8,059,000
-  - Cost of Intervention: $2,347,000
-  - Realised Attrition: $4,230,000
-  - Unrealised Attrition: $3,829,000
-  - Potential Net Benefit: $1,481,000
+  - Cost of Intervention: $2,768,000
+  - Realised Attrition: $3,172,000
+  - Unrealised Attrition: $4,887,000
+  - Potential Net Benefit: $2,119,000
 
 
 
